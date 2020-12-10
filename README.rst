@@ -1,6 +1,6 @@
 .. _central_uart:
 
-Bluetooth: Central UART
+Bluetooth: Central UART, Multi-NUS
 #######################
 
 .. contents::
@@ -8,6 +8,8 @@ Bluetooth: Central UART
    :depth: 2
 
 The Central UART sample demonstrates how to use the :ref:`nus_client_readme`.
+This application is an extension of the Central UART sample. This version of the central UART is able 
+to connect to multiple peripherals, up to 20, at the same time. 
 It uses the NUS Client to send data back and forth between a UART connection and a Bluetooth LE connection, emulating a serial port over Bluetooth LE.
 
 
@@ -18,6 +20,8 @@ When connected, the sample forwards any data received on the RX pin of the UART 
 On Nordic Semiconductor's development kits, the UART 1 peripheral is typically gated through the SEGGER chip to a USB CDC virtual serial port.
 
 Any data sent from the Bluetooth LE unit is sent out of the UART 1 peripheral's TX pin.
+
+This new version broadcasts any data received on the UART to all connections.
 
 
 .. _central_uart_debug:
