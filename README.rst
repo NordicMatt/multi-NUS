@@ -8,8 +8,9 @@ Bluetooth: Central UART, Multi-NUS
    :depth: 2
 
 The Central UART sample demonstrates how to use the :ref:`nus_client_readme`.
-This application is an extension of the Central UART sample. This version of the central UART is able 
-to connect to multiple peripherals, up to 20, at the same time. 
+This application is an extension of the Central UART sample. This version of the central UART is able to connect to multiple peripherals, up to 20, at the same time. 
+This application was built using v1.4.1 of NCS.
+ 
 It uses the NUS Client to send data back and forth between a UART connection and a Bluetooth LE connection, emulating a serial port over Bluetooth LE.
 
 

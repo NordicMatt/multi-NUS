@@ -25,6 +25,7 @@
 #include <bluetooth/scan.h>
 
 #include <bluetooth/conn_ctx.h>
+#include <stdlib.h>
 
 #include <settings/settings.h>
 
@@ -63,6 +64,8 @@ static struct bt_conn *default_conn;
 
 BT_CONN_CTX_DEF(conns, CONFIG_BT_MAX_CONN, sizeof(struct bt_nus_client));
 
+#define ROUTED_MESSAGE_CHAR '*'
+
 static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 {
 
@@ -72,6 +75,117 @@ static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 		LOG_WRN("ATT error code: 0x%02X", err);
 	}
 }
+
+/*	New function for sending data into the multi-NUS
+* 	Extensions to the behavior of message routing can be made here.
+*	If the first character is *, this indicates a routed message.
+*	If the first character is not *, then this is a broadcast message sent to all peers.
+* 	If the message is routed, the two characters after the * will be read as the peer number
+*	and the message will be sent only to that peer. Numbers must be written as two digits, i.e 01 for 1.
+*	The default behavior will be to broadcast in the case of failure of message parsing.
+*/
+static int multi_nus_send(struct uart_data_t *buf){
+	
+	int err = 0;
+	bool broadcast = true;
+	int nus_index = 0;
+	char * message = buf->data;
+	int length = buf->len;
+
+	/*How many connections are there in the Connection Context Library?*/
+	const size_t num_nus_conns = bt_conn_ctx_count(&conns_ctx_lib);
+
+	/*Check if it's a routed message*/
+	if (message[0] == ROUTED_MESSAGE_CHAR){
+		
+		/*Determine who the intended recipient is*/
+		char str[2];
+		str[0] = message[1];
+		str[1] = message[2];
+		nus_index = atoi(str);
+
+		/*Is this a number that makes sense?*/
+		if ((nus_index >= 0) && (nus_index < num_nus_conns)){
+			broadcast = false;
+
+			/*Move the data buffer pointer to after the recipient info and 
+			shorten the length*/
+			message =  &message[3];
+			length = length - 3;
+		}
+	}
+
+
+	/*	If it's a routed message, send it to that guy. 
+	*	If it's not, broadcast it to everyone.
+	*/
+	if (broadcast == false){
+		const struct bt_conn_ctx *ctx =
+				bt_conn_ctx_get_by_id(&conns_ctx_lib, nus_index);
+		
+		if (ctx) {
+			struct bt_nus_client *nus_client = ctx->data;
+
+			if (nus_client) {
+				err = bt_nus_client_send(nus_client,
+								     message,
+								     length);
+				if (err) {
+					LOG_WRN("Failed to send data over BLE connection"
+						"(err %d)",
+						err);
+				}else{
+					LOG_INF("Sent to server %d: %s", nus_index, log_strdup(buf->data));
+				}
+			
+				bt_conn_ctx_release(&conns_ctx_lib,
+							(void *)ctx->data);
+
+				err = k_sem_take(&nus_write_sem,
+							NUS_WRITE_TIMEOUT);
+				if (err) {
+					LOG_WRN("NUS send timeout");
+				}
+			}
+		}
+
+	}else{//Broadcast message
+		for (size_t i = 0; i < num_nus_conns; i++) {
+			const struct bt_conn_ctx *ctx =
+				bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
+
+			if (ctx) {
+				struct bt_nus_client *nus_client = ctx->data;
+
+				if (nus_client) {
+					err = bt_nus_client_send(nus_client,
+								     message,
+								     length);
+					if (err) {
+						LOG_WRN("Failed to send data over BLE connection"
+							"(err %d)",
+							err);
+					}else{
+						LOG_INF("Sent to server %d: %s", nus_index, log_strdup(buf->data));
+					}
+
+					bt_conn_ctx_release(&conns_ctx_lib,
+							    (void *)ctx->data);
+
+					err = k_sem_take(&nus_write_sem,
+							 NUS_WRITE_TIMEOUT);
+					if (err) {
+						LOG_WRN("NUS send timeout");
+					}
+				}
+			}
+		}
+	}
+
+	return err;
+}
+
+
 
 static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 {
@@ -294,6 +408,11 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 	} else {
 		LOG_INF("Scanning started");
 	}
+
+	/*Send a message to the new NUS server informing it of its ID in this 
+	mini-network*/
+
+
 }
 
 static void discovery_service_not_found(struct bt_conn *conn,
@@ -584,6 +703,8 @@ static struct bt_conn_auth_cb conn_auth_callbacks = {
 	.pairing_failed = pairing_failed
 };
 
+
+
 void main(void)
 {
 	int err;
@@ -631,40 +752,7 @@ void main(void)
 		struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
 						     K_FOREVER);
 
-
-		/*Send the message to all active NUS Client connections*/
-		const size_t num_nus_conns = bt_conn_ctx_count(&conns_ctx_lib);
-
-		for (size_t i = 0; i < num_nus_conns; i++) {
-
-			const struct bt_conn_ctx *ctx = bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
-			
-			if (ctx) {
-				struct bt_nus_client *nus_client = ctx->data;
-
-				if (nus_client) {
-					err = bt_nus_client_send(nus_client,
-								 buf->data,
-								 buf->len);
-					if (err) {
-						LOG_WRN("Failed to send data over BLE connection"
-							"(err %d)",
-							err);
-					}else{
-						LOG_INF("Peripheral #%d Send: %s", i, log_strdup(buf->data));
-					}
-
-					bt_conn_ctx_release(&conns_ctx_lib,
-					    (void *)ctx->data);
-
-					err = k_sem_take(&nus_write_sem, NUS_WRITE_TIMEOUT);
-					if (err) {
-						LOG_WRN("NUS send timeout");
-					}
-				}
-			}
-		}
-
+		multi_nus_send(buf);					
 		k_free(buf);
 	
 	}
