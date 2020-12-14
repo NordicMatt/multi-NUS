@@ -26,6 +26,7 @@
 
 #include <bluetooth/conn_ctx.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include <settings/settings.h>
 
@@ -65,6 +66,7 @@ static struct bt_conn *default_conn;
 BT_CONN_CTX_DEF(conns, CONFIG_BT_MAX_CONN, sizeof(struct bt_nus_client));
 
 #define ROUTED_MESSAGE_CHAR '*'
+#define BROADCAST_INDEX 99
 
 static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 {
@@ -110,6 +112,10 @@ static int multi_nus_send(struct uart_data_t *buf){
 
 			/*Move the data buffer pointer to after the recipient info and 
 			shorten the length*/
+			message =  &message[3];
+			length = length - 3;
+		} else if (nus_index == BROADCAST_INDEX) {
+			broadcast = true;
 			message =  &message[3];
 			length = length - 3;
 		}
@@ -185,7 +191,11 @@ static int multi_nus_send(struct uart_data_t *buf){
 	return err;
 }
 
-
+/*	This function has been updated to add the ability for a peer to route a message by
+*	appending a '*' as in the multi-NUS send function. So a peer could send the message
+*	*00 to send a message to peer 0. If the peer sends a *99, that message is broadcast to 
+*	all peers
+*/
 
 static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 {
@@ -218,6 +228,13 @@ static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 		if ((pos == len) && (data[len - 1] == '\r')) {
 			tx->data[tx->len] = '\n';
 			tx->len++;
+		}
+
+		/*	Routed messages. See the comments above. 
+		*	Check for *, if there's a star, send it over to the multi-nus send function
+		*/
+		if (data[0] == '*') {
+			multi_nus_send(tx);
 		}
 
 		err = uart_tx(uart, tx->data, tx->len, SYS_FOREVER_MS);
@@ -411,8 +428,43 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 
 	/*Send a message to the new NUS server informing it of its ID in this 
 	mini-network*/
+	/*	The new NUS will have been added to the connection context library and so
+	* 	will be the highest index as they are added incrementally upwards.
+	*	This is a bit of a workaround because in this function, I don't know
+	*	the ID of this connection which is the piece of info I want to transmit.
+	*/
+	size_t num_nus_conns = bt_conn_ctx_count(&conns_ctx_lib);
+	size_t nus_index = 99;
 
+	/*	This is a little inelegant but we must get the index of the device to
+	* 	convey it
+	*/
+	for (size_t i = 0; i < num_nus_conns; i++) {
+		const struct bt_conn_ctx *ctx =
+				bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
+		
+		if (ctx) {
+			if (ctx->data == nus) {
+				nus_index = i;
+				break;
+			}
+		}
+	}
 
+	char message[3];
+	sprintf(message, "%d", nus_index);
+	message[2] = '\r';
+	int length = 3;
+
+	err = bt_nus_client_send(nus, message, length);
+	if (err) {
+		LOG_WRN("Failed to send data over BLE connection"
+			"(err %d)",
+			err);
+	} else {
+		LOG_INF("Sent to server %d: %s", num_nus_conns,
+			log_strdup(message));
+	}
 }
 
 static void discovery_service_not_found(struct bt_conn *conn,
@@ -516,13 +568,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	gatt_discover(conn);
 
-	// err = bt_conn_set_security(conn, BT_SECURITY_L2);
-	// if (err) {
-	// 	LOG_WRN("Failed to set security: %d", err);
-
-	// 	gatt_discover(conn);
-	// }
-
+	/*Stop scanning during the discovery*/
 	err = bt_scan_stop();
 	if ((!err) && (err != -EALREADY)) {
 		LOG_ERR("Stop LE scan failed (err %d)", err);
