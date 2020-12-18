@@ -64,6 +64,7 @@ static K_FIFO_DEFINE(fifo_uart_rx_data);
 static struct bt_conn *default_conn;
 
 BT_CONN_CTX_DEF(conns, CONFIG_BT_MAX_CONN, sizeof(struct bt_nus_client));
+static bool routedMessage = false;
 
 #define ROUTED_MESSAGE_CHAR '*'
 #define BROADCAST_INDEX 99
@@ -89,40 +90,48 @@ static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
 static int multi_nus_send(struct uart_data_t *buf){
 	
 	int err = 0;
-	bool broadcast = true;
-	int nus_index = 0;
 	char * message = buf->data;
 	int length = buf->len;
+	
+	static bool broadcast = false;
+	static bool messageStart = true;
+	static int nus_index = 0;
 
 	LOG_INF("Multi-Nus Send");
 
 	/*How many connections are there in the Connection Context Library?*/
 	const size_t num_nus_conns = bt_conn_ctx_count(&conns_ctx_lib);
 
-	/*Check if it's a routed message*/
-	if (message[0] == ROUTED_MESSAGE_CHAR){
-		
-		/*Determine who the intended recipient is*/
-		char str[2];
-		str[0] = message[1];
-		str[1] = message[2];
-		nus_index = atoi(str);
+	/*Handle the routing of the message only at the beginning of the message*/
+	if (messageStart) {
+		messageStart = false;
 
-		/*Is this a number that makes sense?*/
-		if ((nus_index >= 0) && (nus_index < num_nus_conns)){
-			broadcast = false;
+		/*Check if it's a routed message*/
+		if (message[0] == ROUTED_MESSAGE_CHAR) {
+			
+			routedMessage = true;
+			/*Determine who the intended recipient is*/
+			char str[2];
+			str[0] = message[1];
+			str[1] = message[2];
+			nus_index = atoi(str);
 
-			/*Move the data buffer pointer to after the recipient info and 
-			shorten the length*/
-			message =  &message[3];
-			length = length - 3;
-		} else if (nus_index == BROADCAST_INDEX) {
+			/*Is this a number that makes sense?*/
+			if ((nus_index >= 0) && (nus_index < num_nus_conns)){
+				broadcast = false;
+
+				/*Move the data buffer pointer to after the recipient info and 
+				shorten the length*/
+				message =  &message[3];
+				length = length - 3;
+			} else if (nus_index == BROADCAST_INDEX) {
+				broadcast = true;
+				message =  &message[3];
+				length = length - 3;
+			}
+		} else {
 			broadcast = true;
-			message =  &message[3];
-			length = length - 3;
 		}
-	} else {
-		broadcast = true;
 	}
 
 
@@ -133,6 +142,8 @@ static int multi_nus_send(struct uart_data_t *buf){
 		const struct bt_conn_ctx *ctx =
 				bt_conn_ctx_get_by_id(&conns_ctx_lib, nus_index);
 		
+		LOG_INF("Trying to send to server %d", nus_index);
+
 		if (ctx) {
 			struct bt_nus_client *nus_client = ctx->data;
 
@@ -148,8 +159,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 					LOG_INF("Sent to server %d: %s", nus_index, log_strdup(buf->data));
 				}
 			
-				bt_conn_ctx_release(&conns_ctx_lib,
-							(void *)ctx->data);
+				
 
 				err = k_sem_take(&nus_write_sem,
 							NUS_WRITE_TIMEOUT);
@@ -157,6 +167,9 @@ static int multi_nus_send(struct uart_data_t *buf){
 					LOG_WRN("NUS send timeout");
 				}
 			}
+
+			bt_conn_ctx_release(&conns_ctx_lib,
+							(void *)ctx->data);
 		}
 
 	}else{//Broadcast message
@@ -191,6 +204,11 @@ static int multi_nus_send(struct uart_data_t *buf){
 				}
 			}
 		}
+	}
+
+	if ( (message[length-1] == '\n') || (message[length-1] == '\r') ) {
+		messageStart = true;
+		routedMessage = false;
 	}
 
 	return err;
@@ -238,7 +256,7 @@ static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 		/*	Routed messages. See the comments above. 
 		*	Check for *, if there's a star, send it over to the multi-nus send function
 		*/
-		if (data[0] == '*') {
+		if (( data[0] == '*') || (routedMessage == true) ) {
 			multi_nus_send(tx);
 		}
 
