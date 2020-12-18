@@ -94,8 +94,6 @@ static int multi_nus_send(struct uart_data_t *buf){
 	char * message = buf->data;
 	int length = buf->len;
 
-	LOG_INF("Multi-Nus Send");
-
 	/*How many connections are there in the Connection Context Library?*/
 	const size_t num_nus_conns = bt_conn_ctx_count(&conns_ctx_lib);
 
@@ -161,14 +159,14 @@ static int multi_nus_send(struct uart_data_t *buf){
 
 	}else{//Broadcast message
 		LOG_INF("Broadcast");
-		for (int i = 0; i < num_nus_conns; i++) {
+		for (size_t i = 0; i < num_nus_conns; i++) {
 			const struct bt_conn_ctx *ctx =
 				bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
-		
+
 			if (ctx) {
 				struct bt_nus_client *nus_client = ctx->data;
-				
-				if (nus_client) {
+
+				if (nus_client != NULL) {
 					err = bt_nus_client_send(nus_client,
 								     message,
 								     length);
@@ -177,7 +175,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 							"(err %d)",
 							err);
 					}else{
-						LOG_INF("Sent to server %d: %s", i, log_strdup(buf->data));
+						LOG_INF("Sent to server %d: %s", nus_index, log_strdup(buf->data));
 					}
 
 					bt_conn_ctx_release(&conns_ctx_lib,
@@ -442,38 +440,33 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 	size_t nus_index = 99;
 
 	/*	This is a little inelegant but we must get the index of the device to
-	* 	convey it. This bit sends the index number to the peripheral.
+	* 	convey it
 	*/
 	for (size_t i = 0; i < num_nus_conns; i++) {
 		const struct bt_conn_ctx *ctx =
-			bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
-
+				bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
+		
 		if (ctx) {
 			if (ctx->data == nus) {
 				nus_index = i;
-				char message[3];
-				sprintf(message, "%d", nus_index);
-				message[2] = '\r';
-				int length = 3;
-
-				err = bt_nus_client_send(nus, message, length);
-				if (err) {
-					LOG_WRN("Failed to send data over BLE connection"
-						"(err %d)",
-						err);
-				} else {
-					LOG_INF("Sent to server %d: %s",
-						nus_index, log_strdup(message));
-				}
-
-				bt_conn_ctx_release(&conns_ctx_lib,
-						    (void *)ctx->data);
 				break;
-			} else {
-				bt_conn_ctx_release(&conns_ctx_lib,
-						    (void *)ctx->data);
 			}
 		}
+	}
+
+	char message[3];
+	sprintf(message, "%d", nus_index);
+	message[2] = '\r';
+	int length = 3;
+
+	err = bt_nus_client_send(nus, message, length);
+	if (err) {
+		LOG_WRN("Failed to send data over BLE connection"
+			"(err %d)",
+			err);
+	} else {
+		LOG_INF("Sent to server %d: %s", num_nus_conns,
+			log_strdup(message));
 	}
 }
 
@@ -659,6 +652,26 @@ static void scan_connecting(struct bt_scan_device_info *device_info,
 	default_conn = bt_conn_ref(conn);
 }
 
+// static int nus_client_init(void)
+// {
+// 	int err;
+// 	struct bt_nus_client_init_param init = {
+// 		.cb = {
+// 			.received = ble_data_received,
+// 			.sent = ble_data_sent,
+// 		}
+// 	};
+
+// 	err = bt_nus_client_init(&nus_client, &init);
+// 	if (err) {
+// 		LOG_ERR("NUS Client initialization failed (err %d)", err);
+// 		return err;
+// 	}
+
+// 	LOG_INF("NUS Client module initialized");
+// 	return err;
+// }
+
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
 		scan_connecting_error, scan_connecting);
 
@@ -789,6 +802,7 @@ void main(void)
 						     K_FOREVER);
 
 		multi_nus_send(buf);					
+		k_free(buf);
 	
 	}
 }
