@@ -43,7 +43,7 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define KEY_PASSKEY_ACCEPT DK_BTN1_MSK
 #define KEY_PASSKEY_REJECT DK_BTN2_MSK
 
-#define NUS_WRITE_TIMEOUT K_MSEC(150)
+#define NUS_WRITE_TIMEOUT K_MSEC(500)
 #define UART_WAIT_FOR_BUF_DELAY K_MSEC(50)
 #define UART_RX_TIMEOUT 50
 
@@ -65,6 +65,7 @@ static struct bt_conn *default_conn;
 
 BT_CONN_CTX_DEF(conns, CONFIG_BT_MAX_CONN, sizeof(struct bt_nus_client));
 static bool routedMessage = false;
+static bool messageStart = true;
 
 #define ROUTED_MESSAGE_CHAR '*'
 #define BROADCAST_INDEX 99
@@ -94,7 +95,6 @@ static int multi_nus_send(struct uart_data_t *buf){
 	int length = buf->len;
 	
 	static bool broadcast = false;
-	static bool messageStart = true;
 	static int nus_index = 0;
 
 	LOG_INF("Multi-Nus Send");
@@ -156,7 +156,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 						"(err %d)",
 						err);
 				}else{
-					LOG_INF("Sent to server %d: %s", nus_index, log_strdup(buf->data));
+					LOG_INF("Sent to server %d: %s", nus_index, log_strdup(message));
 				}
 			
 				
@@ -190,7 +190,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 							"(err %d)",
 							err);
 					}else{
-						LOG_INF("Sent to server %d: %s", i, log_strdup(buf->data));
+						LOG_INF("Sent to server %d: %s", i, log_strdup(message));
 					}
 
 					bt_conn_ctx_release(&conns_ctx_lib,
@@ -233,7 +233,7 @@ static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 		}
 
 		/* Keep the last byte of TX buffer for potential LF char. */
-		size_t tx_data_size = sizeof(tx->data) - 1;
+		size_t tx_data_size = sizeof(tx->data);// - 1;
 
 		if ((len - pos) > tx_data_size) {
 			tx->len = tx_data_size;
@@ -805,7 +805,7 @@ void main(void)
 		/* Wait indefinitely for data to be sent over Bluetooth */
 		struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
 						     K_FOREVER);
-
+		LOG_INF("Hey Hey");
 		multi_nus_send(buf);					
 	
 	}
