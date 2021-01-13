@@ -1,104 +1,35 @@
-.. _central_uart:
+.. _multi-NUS:
 
-Bluetooth: Central UART, Multi-NUS
+Bluetooth: Multi-NUS Central
 #######################
 
 .. contents::
    :local:
    :depth: 2
 
-The Central UART sample demonstrates how to use the :ref:`nus_client_readme`.
-This application is an extension of the Central UART sample. This version of the central UART is able to connect to multiple peripherals, up to 20, at the same time. 
+The Multi-NUS is a simple wireless UART network demo.
+
+This application is an extension of the Central UART sample application in NCS which is a fork of the Zephyr Project. 
+This version of the central UART is able to connect to multiple peripherals, up to 20, at the same time. 
 This application was built using v1.4.1 of NCS.
  
 It uses the NUS Client to send data back and forth between a UART connection and a Bluetooth LE connection, emulating a serial port over Bluetooth LE.
 
+Please see my blog post on the DevZone for a complete and thorough explanation: 
+https://devzone.nordicsemi.com/nordic/nrf-connect-sdk-guides/b/software/posts/enter-the-multi-nus-a-simple-wireless-uart-network
+
+Also consult the documentation for original Nordic UART Service. There you'll find all you need to know about which devices to use, programming, debugging, and testing. 
+
+http://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/samples/bluetooth/central_uart/README.html
 
 Overview
 ********
 
-When connected, the sample forwards any data received on the RX pin of the UART 1 peripheral to the Bluetooth LE unit.
-On Nordic Semiconductor's development kits, the UART 1 peripheral is typically gated through the SEGGER chip to a USB CDC virtual serial port.
+This application runs on a central device and will connect to up to 20 peripheral devices running the peripheral_uart sample from NCS.
+The peripheral application doesn't need to be modified. 
 
-Any data sent from the Bluetooth LE unit is sent out of the UART 1 peripheral's TX pin.
+There is a simple protocol for routing messages on the network. 
 
-This new version broadcasts any data received on the UART to all connections.
-
-
-.. _central_uart_debug:
-
-Debugging
-*********
-
-In this sample, a UART console is used to send and read data over the NUS Client.
-Debug messages are not displayed in the UART console, but are printed by the RTT logger instead.
-
-If you want to view the debug messages, follow the procedure in :ref:`testing_rtt_connect`.
-
-Requirements
-************
-
-The sample supports the following development kits:
-
-.. table-from-rows:: /includes/sample_board_rows.txt
-   :header: heading
-   :rows: nrf5340dk_nrf5340_cpuapp_and_cpuappns, nrf52840dk_nrf52840, nrf52dk_nrf52832, nrf52833dk_nrf52833, nrf52833dk_nrf52820
-
-The sample also requires another development kit running a compatible application (see :ref:`peripheral_uart`).
-
-Building and running
-********************
-.. |sample path| replace:: :file:`samples/bluetooth/central_uart`
-
-.. include:: /includes/build_and_run.txt
-
-
-.. _central_uart_testing:
-
-Testing
-=======
-
-After programming the sample to your board, test it by performing the following steps:
-
-1. Connect the board to the computer using a USB cable. The board is assigned a COM port (Windows) or ttyACM device (Linux), which is visible in the Device Manager.
-#. |connect_terminal_specific|
-#. Optionally, connect the RTT console to display debug messages. See :ref:`central_uart_debug`.
-#. Reset the board.
-#. Observe that the text "Starting NUS Client example" is printed on the COM listener running on the computer and the device starts scanning for Peripheral boards with NUS.
-#. Program the :ref:`peripheral_uart` sample to the second board.
-   See the documentation for that sample for detailed instructions.
-#. Observe that the boards connect.
-   When service discovery is completed, the event logs are printed on the Central board's terminal.
-#. Now you can send data between the two boards.
-   To do so, type some characters in the terminal of one of the boards and hit Enter.
-   Observe that the data is displayed on the UART on the other board.
-#. Disconnect the devices by, for example, pressing the Reset button on the Central board.
-   Observe that the boards automatically reconnect and that it is again possible to send data between the two boards.
-
-Dependencies
-************
-
-This sample uses the following |NCS| libraries:
-
-* :ref:`nus_client_readme`
-* :ref:`gatt_dm_readme`
-* :ref:`nrf_bt_scan_readme`
-
-In addition, it uses the following Zephyr libraries:
-
-* ``include/zephyr/types.h``
-* ``boards/arm/nrf*/board.h``
-* :ref:`zephyr:kernel_api`:
-
-  * ``include/kernel.h``
-
-* :ref:`zephyr:api_peripherals`:
-
-   * ``include/uart.h``
-
-* :ref:`zephyr:bluetooth_api`:
-
-  * ``include/bluetooth/bluetooth.h``
-  * ``include/bluetooth/gatt.h``
-  * ``include/bluetooth/hci.h``
-  * ``include/bluetooth/uuid.h``
+All routed messages start with *, followed by a two digit ID for the peripheral. Whatever data you intend to transmit will follow. 
+Any device can created a routed message by using this code and the message will be transmitted by the central.
+Any device can broadcast a message by using the address 99.
