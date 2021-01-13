@@ -1,11 +1,5 @@
-.. _multi-NUS:
-
 Bluetooth: Multi-NUS Central
 #######################
-
-.. contents::
-   :local:
-   :depth: 2
 
 The Multi-NUS is a simple wireless UART network demo.
 
@@ -21,9 +15,6 @@ https://devzone.nordicsemi.com/nordic/nrf-connect-sdk-guides/b/software/posts/en
 Also consult the documentation for original Nordic UART Service. There you'll find all you need to know about which devices to use, programming, debugging, and testing. 
 
 http://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/nrf/samples/bluetooth/central_uart/README.html
-
-Overview
-********
 
 This application runs on a central device and will connect to up to 20 peripheral devices running the peripheral_uart sample from NCS.
 The peripheral application doesn't need to be modified. 
