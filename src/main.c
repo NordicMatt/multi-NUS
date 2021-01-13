@@ -574,8 +574,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 	/*Allocate memory for this connection using the connection context library. For reference,
 	this code was taken from hids.c
 	*/
-	struct bt_nus_client *nus_client =
-		bt_conn_ctx_alloc(&conns_ctx_lib, conn);
+	struct bt_nus_client *nus_client = bt_conn_ctx_alloc(&conns_ctx_lib, conn);
 
 	if (!nus_client) {
 		LOG_WRN("There is no free memory to "
@@ -622,12 +621,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_conn_unref(conn);
 	default_conn = NULL;
-
-	// err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-	// if (err) {
-	// 	LOG_ERR("Scanning failed to start (err %d)",
-	// 		err);
-	// }
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -757,8 +750,6 @@ static struct bt_conn_auth_cb conn_auth_callbacks = {
 	.pairing_failed = pairing_failed
 };
 
-
-
 void main(void)
 {
 	int err;
@@ -805,7 +796,6 @@ void main(void)
 		/* Wait indefinitely for data to be sent over Bluetooth */
 		struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
 						     K_FOREVER);
-		LOG_INF("Hey Hey");
 		multi_nus_send(buf);					
 	
 	}
