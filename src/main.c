@@ -7,32 +7,37 @@
 /** @file
  *  @brief Nordic UART Service Client sample
  */
+#include "uart_async_adapter.h"//WRC
+#include <zephyr/usb/usb_device.h> //WRC
+#include <errno.h> 
+#include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h> 
+#include <zephyr/sys/printk.h> 
 
-#include <errno.h>
-#include <zephyr.h>
-#include <sys/byteorder.h>
-#include <sys/printk.h>
+#include <zephyr/device.h>
+#include <zephyr/devicetree.h>
+#include <soc.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/conn.h>
-#include <bluetooth/uuid.h>
-#include <bluetooth/gatt.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/uuid.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/bluetooth/conn.h> 
 
 #include <bluetooth/services/nus.h>
 #include <bluetooth/services/nus_client.h>
 #include <bluetooth/gatt_dm.h>
 #include <bluetooth/scan.h>
 
-#include <bluetooth/conn_ctx.h>
+#include <bluetooth/conn_ctx.h> 
 #include <stdlib.h>
 #include <stdio.h>
 
-#include <settings/settings.h>
+#include <zephyr/settings/settings.h>
 
-#include <drivers/uart.h>
+#include <zephyr/drivers/uart.h>
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 
 #define LOG_MODULE_NAME central_uart
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
@@ -47,8 +52,8 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #define UART_WAIT_FOR_BUF_DELAY K_MSEC(50)
 #define UART_RX_TIMEOUT 50
 
-static const struct device *uart;
-static struct k_delayed_work uart_work;
+static const struct device *uart = DEVICE_DT_GET(DT_CHOSEN(nordic_nus_uart));
+static struct k_work_delayable uart_work; 
 
 K_SEM_DEFINE(nus_write_sem, 0, 1);
 
@@ -57,6 +62,12 @@ struct uart_data_t {
 	uint8_t  data[UART_BUF_SIZE];
 	uint16_t len;
 };
+//WRC
+#if CONFIG_BT_NUS_UART_ASYNC_ADAPTER
+UART_ASYNC_ADAPTER_INST_DEFINE(async_adapter);
+#else
+static const struct device *const async_adapter;
+#endif
 
 static K_FIFO_DEFINE(fifo_uart_tx_data);
 static K_FIFO_DEFINE(fifo_uart_rx_data);
@@ -64,13 +75,14 @@ static K_FIFO_DEFINE(fifo_uart_rx_data);
 static struct bt_conn *default_conn;
 
 BT_CONN_CTX_DEF(conns, CONFIG_BT_MAX_CONN, sizeof(struct bt_nus_client));
+
 static bool routedMessage = false;
 static bool messageStart = true;
 
 #define ROUTED_MESSAGE_CHAR '*'
 #define BROADCAST_INDEX 99
 
-static void ble_data_sent(uint8_t err, const uint8_t *const data, uint16_t len)
+static void ble_data_sent(struct bt_nus_client *nus,uint8_t err, const uint8_t *const data, uint16_t len)
 {
 
 	k_sem_give(&nus_write_sem);
@@ -135,15 +147,16 @@ static int multi_nus_send(struct uart_data_t *buf){
 	}
 
 
+
 	/*	If it's a routed message, send it to that guy. 
 	*	If it's not, broadcast it to everyone.
 	*/
 	if (broadcast == false){
 		const struct bt_conn_ctx *ctx =
 				bt_conn_ctx_get_by_id(&conns_ctx_lib, nus_index);
-		
 		LOG_INF("Trying to send to server %d", nus_index);
 
+		
 		if (ctx) {
 			struct bt_nus_client *nus_client = ctx->data;
 
@@ -156,32 +169,31 @@ static int multi_nus_send(struct uart_data_t *buf){
 						"(err %d)",
 						err);
 				}else{
-					LOG_INF("Sent to server %d: %s", nus_index, log_strdup(message));
+					LOG_INF("Sent to server %d: %s", nus_index, buf->data);
 				}
 			
-				
-
+			
 				err = k_sem_take(&nus_write_sem,
 							NUS_WRITE_TIMEOUT);
 				if (err) {
 					LOG_WRN("NUS send timeout");
 				}
 			}
-
 			bt_conn_ctx_release(&conns_ctx_lib,
 							(void *)ctx->data);
+
 		}
 
 	}else{//Broadcast message
 		LOG_INF("Broadcast");
-		for (int i = 0; i < num_nus_conns; i++) {
+		for (size_t i = 0; i < num_nus_conns; i++) {
 			const struct bt_conn_ctx *ctx =
 				bt_conn_ctx_get_by_id(&conns_ctx_lib, i);
-		
+
 			if (ctx) {
 				struct bt_nus_client *nus_client = ctx->data;
-				
-				if (nus_client) {
+
+				if (nus_client != NULL) {
 					err = bt_nus_client_send(nus_client,
 								     message,
 								     length);
@@ -190,7 +202,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 							"(err %d)",
 							err);
 					}else{
-						LOG_INF("Sent to server %d: %s", i, log_strdup(message));
+						LOG_INF("Sent to server %d: %s", nus_index, buf->data);
 					}
 
 					bt_conn_ctx_release(&conns_ctx_lib,
@@ -205,7 +217,6 @@ static int multi_nus_send(struct uart_data_t *buf){
 			}
 		}
 	}
-
 	if ( (message[length-1] == '\n') || (message[length-1] == '\r') ) {
 		messageStart = true;
 		routedMessage = false;
@@ -220,7 +231,7 @@ static int multi_nus_send(struct uart_data_t *buf){
 *	all peers
 */
 
-static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
+static uint8_t ble_data_received(struct bt_nus_client *nus,const uint8_t *const data, uint16_t len)
 {
 	int err;
 
@@ -233,7 +244,7 @@ static uint8_t ble_data_received(const uint8_t *const data, uint16_t len)
 		}
 
 		/* Keep the last byte of TX buffer for potential LF char. */
-		size_t tx_data_size = sizeof(tx->data);// - 1;
+		size_t tx_data_size = sizeof(tx->data) - 1;
 
 		if ((len - pos) > tx_data_size) {
 			tx->len = tx_data_size;
@@ -277,7 +288,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 	static size_t aborted_len;
 	static bool buf_release;
 	struct uart_data_t *buf;
-	static uint8_t *aborted_buf;
+	static uint8_t *aborted_buf; 
 
 	switch (evt->type) {
 	case UART_TX_DONE:
@@ -287,14 +298,13 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 		}
 
 		if (aborted_buf) {
-			buf = CONTAINER_OF(aborted_buf, struct uart_data_t,
-					   data);
+			buf = CONTAINER_OF(aborted_buf, struct uart_data_t, data[0]);
 			aborted_buf = NULL;
 			aborted_len = 0;
 		} else {
 			buf = CONTAINER_OF(evt->data.tx.buf,
 					   struct uart_data_t,
-					   data);
+					   data[0]);
 		}
 
 		k_free(buf);
@@ -311,7 +321,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 		break;
 
 	case UART_RX_RDY:
-		buf = CONTAINER_OF(evt->data.rx.buf, struct uart_data_t, data);
+		buf = CONTAINER_OF(evt->data.rx.buf, struct uart_data_t, data[0]);
 		buf->len += evt->data.rx.len;
 		buf_release = false;
 
@@ -333,7 +343,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 			buf->len = 0;
 		} else {
 			LOG_WRN("Not able to allocate UART receive buffer");
-			k_delayed_work_submit(&uart_work,
+			k_work_schedule(&uart_work,
 					      UART_WAIT_FOR_BUF_DELAY);
 			return;
 		}
@@ -356,7 +366,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 
 	case UART_RX_BUF_RELEASED:
 		buf = CONTAINER_OF(evt->data.rx_buf.buf, struct uart_data_t,
-				   data);
+				   data[0]);
 		if (buf_release && (current_buf != evt->data.rx_buf.buf)) {
 			k_free(buf);
 			buf_release = false;
@@ -372,7 +382,7 @@ static void uart_cb(const struct device *dev, struct uart_event *evt, void *user
 
 			aborted_len += evt->data.tx.len;
 			buf = CONTAINER_OF(aborted_buf, struct uart_data_t,
-					   data);
+					   data[0]);
 
 			uart_tx(uart, &buf->data[aborted_len],
 				buf->len - aborted_len, SYS_FOREVER_MS);
@@ -393,11 +403,20 @@ static void uart_work_handler(struct k_work *item)
 		buf->len = 0;
 	} else {
 		LOG_WRN("Not able to allocate UART receive buffer");
-		k_delayed_work_submit(&uart_work, UART_WAIT_FOR_BUF_DELAY);
+		k_work_schedule(&uart_work, UART_WAIT_FOR_BUF_DELAY);
 		return;
 	}
 
 	uart_rx_enable(uart, buf->data, sizeof(buf->data), UART_RX_TIMEOUT);
+}
+
+//WRC
+static bool uart_test_async_api(const struct device *dev)
+{
+	const struct uart_driver_api *api =
+			(const struct uart_driver_api *)dev->api;
+
+	return (api->callback_set != NULL);
 }
 
 static int uart_init(void)
@@ -405,11 +424,20 @@ static int uart_init(void)
 	int err;
 	struct uart_data_t *rx;
 
-	uart = device_get_binding(DT_LABEL(DT_NODELABEL(uart0)));
-	if (!uart) {
-		LOG_ERR("UART binding failed");
-		return -ENXIO;
+	if (!device_is_ready(uart)) {
+		LOG_ERR("UART device not ready");
+		return -ENODEV;
 	}
+	//WRC
+
+	if (IS_ENABLED(CONFIG_USB_DEVICE_STACK)) {
+		err = usb_enable(NULL);
+		if (err && (err != -EALREADY)) {
+			LOG_ERR("Failed to enable USB");
+			return err;
+		}
+	}
+
 
 	rx = k_malloc(sizeof(*rx));
 	if (rx) {
@@ -418,7 +446,14 @@ static int uart_init(void)
 		return -ENOMEM;
 	}
 
-	k_delayed_work_init(&uart_work, uart_work_handler);
+	k_work_init_delayable(&uart_work, uart_work_handler);
+	//WRC
+	
+	if (IS_ENABLED(CONFIG_BT_NUS_UART_ASYNC_ADAPTER) && !uart_test_async_api(uart)) {
+		/* Implement API adapter */
+		uart_async_adapter_init(async_adapter, uart);
+		uart = async_adapter;
+	}
 
 	err = uart_callback_set(uart, uart_cb, NULL);
 	if (err) {
@@ -460,7 +495,7 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 	size_t nus_index = 99;
 
 	/*	This is a little inelegant but we must get the index of the device to
-	* 	convey it. This bit sends the index number to the peripheral.
+	* 	convey it
 	*/
 	for (size_t i = 0; i < num_nus_conns; i++) {
 		const struct bt_conn_ctx *ctx =
@@ -481,7 +516,7 @@ static void discovery_complete(struct bt_gatt_dm *dm,
 						err);
 				} else {
 					LOG_INF("Sent to server %d: %s",
-						nus_index, log_strdup(message));
+						nus_index, message);
 				}
 
 				bt_conn_ctx_release(&conns_ctx_lib,
@@ -542,18 +577,17 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 {
 	char addr[BT_ADDR_LE_STR_LEN];
 	int err;
-	struct bt_nus_client_init_param init = {
+/*	struct bt_nus_client_init_param init = {
 		.cb = {
 			.received = ble_data_received,
 			.sent = ble_data_sent,
 		}
 	};
-
+*/
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	if (conn_err) {
-		LOG_INF("Failed to connect to %s (%d)", log_strdup(addr),
-			conn_err);
+		LOG_INF("Failed to connect to %s (%d)", addr,conn_err);
 
 		if (default_conn == conn) {
 			bt_conn_unref(default_conn);
@@ -569,17 +603,24 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 		return;
 	}
 
-	LOG_INF("Connected: %s", log_strdup(addr));
+	LOG_INF("Connected: %s", addr);
 
 	/*Allocate memory for this connection using the connection context library. For reference,
 	this code was taken from hids.c
 	*/
-	struct bt_nus_client *nus_client = bt_conn_ctx_alloc(&conns_ctx_lib, conn);
+	struct bt_nus_client *nus_client =bt_conn_ctx_alloc(&conns_ctx_lib, conn);
 
 	if (!nus_client) {
 		LOG_WRN("There is no free memory to "
 			"allocate the connection context");
 	}
+	
+	struct bt_nus_client_init_param init = {
+		.cb = {
+			.received = ble_data_received,
+			.sent = ble_data_sent,
+		}
+	};
 
 	memset(nus_client, 0, bt_conn_ctx_block_size_get(&conns_ctx_lib));
 
@@ -609,8 +650,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_INF("Disconnected: %s (reason %u)", log_strdup(addr),
-		reason);
+	LOG_INF("Disconnected: %s (reason %u)", addr,reason);
 
 	err = bt_conn_ctx_free(&conns_ctx_lib, conn);
 
@@ -621,6 +661,12 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 
 	bt_conn_unref(conn);
 	default_conn = NULL;
+
+	// err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+	// if (err) {
+	// 	LOG_ERR("Scanning failed to start (err %d)",
+	// 		err);
+	// }
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
@@ -631,11 +677,9 @@ static void security_changed(struct bt_conn *conn, bt_security_t level,
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
 	if (!err) {
-		LOG_INF("Security changed: %s level %u", log_strdup(addr),
-			level);
+		LOG_INF("Security changed: %s level %u", addr,level);
 	} else {
-		LOG_WRN("Security failed: %s level %u err %d", log_strdup(addr),
-			level, err);
+		LOG_WRN("Security failed: %s level %u err %d", addr,level, err);
 	}
 
 	gatt_discover(conn);
@@ -655,8 +699,7 @@ static void scan_filter_match(struct bt_scan_device_info *device_info,
 
 	bt_addr_le_to_str(device_info->recv_info->addr, addr, sizeof(addr));
 
-	LOG_INF("Filters matched. Address: %s connectable: %d",
-		log_strdup(addr), connectable);
+	LOG_INF("Filters matched. Address: %s connectable: %d",addr, connectable);
 }
 
 static void scan_connecting_error(struct bt_scan_device_info *device_info)
@@ -669,6 +712,26 @@ static void scan_connecting(struct bt_scan_device_info *device_info,
 {
 	default_conn = bt_conn_ref(conn);
 }
+
+// static int nus_client_init(void)
+// {
+// 	int err;
+// 	struct bt_nus_client_init_param init = {
+// 		.cb = {
+// 			.received = ble_data_received,
+// 			.sent = ble_data_sent,
+// 		}
+// 	};
+
+// 	err = bt_nus_client_init(&nus_client, &init);
+// 	if (err) {
+// 		LOG_ERR("NUS Client initialization failed (err %d)", err);
+// 		return err;
+// 	}
+
+// 	LOG_INF("NUS Client module initialized");
+// 	return err;
+// }
 
 BT_SCAN_CB_INIT(scan_cb, scan_filter_match, NULL,
 		scan_connecting_error, scan_connecting);
@@ -706,7 +769,7 @@ static void auth_cancel(struct bt_conn *conn)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_INF("Pairing cancelled: %s", log_strdup(addr));
+	LOG_INF("Pairing cancelled: %s", addr);
 }
 
 
@@ -718,7 +781,7 @@ static void pairing_confirm(struct bt_conn *conn)
 
 	bt_conn_auth_pairing_confirm(conn);
 
-	LOG_INF("Pairing confirmed: %s", log_strdup(addr));
+	LOG_INF("Pairing confirmed: %s", addr);
 }
 
 
@@ -728,8 +791,7 @@ static void pairing_complete(struct bt_conn *conn, bool bonded)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_INF("Pairing completed: %s, bonded: %d", log_strdup(addr),
-		bonded);
+	LOG_INF("Pairing completed: %s, bonded: %d", addr,bonded);
 }
 
 
@@ -739,31 +801,41 @@ static void pairing_failed(struct bt_conn *conn, enum bt_security_err reason)
 
 	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
 
-	LOG_WRN("Pairing failed conn: %s, reason %d", log_strdup(addr),
-		reason);
+	LOG_WRN("Pairing failed conn: %s, reason %d", addr,	reason);
 }
 
 static struct bt_conn_auth_cb conn_auth_callbacks = {
 	.cancel = auth_cancel,
-	.pairing_confirm = pairing_confirm,
+	.pairing_confirm = pairing_confirm
+};
+
+static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 	.pairing_complete = pairing_complete,
 	.pairing_failed = pairing_failed
 };
 
-void main(void)
+
+
+int main(void)
 {
 	int err;
 
 	err = bt_conn_auth_cb_register(&conn_auth_callbacks);
 	if (err) {
 		LOG_ERR("Failed to register authorization callbacks.");
-		return;
+		return 0;
+	}
+
+	err = bt_conn_auth_info_cb_register(&conn_auth_info_callbacks);
+	if (err) {
+		printk("Failed to register authorization info callbacks.\n");
+		return 0;
 	}
 
 	err = bt_enable(NULL);
 	if (err) {
 		LOG_ERR("Bluetooth init failed (err %d)", err);
-		return;
+		return 0;
 	}
 	LOG_INF("Bluetooth initialized");
 
@@ -777,7 +849,7 @@ void main(void)
 	for (size_t i = 0; i < ARRAY_SIZE(module_init); i++) {
 		err = (*module_init[i])();
 		if (err) {
-			return;
+			return 0;
 		}
 	}
 
@@ -787,7 +859,7 @@ void main(void)
 	err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
 	if (err) {
 		LOG_ERR("Scanning failed to start (err %d)", err);
-		return;
+		return 0;
 	}
 
 	LOG_INF("Scanning successfully started");
@@ -796,7 +868,8 @@ void main(void)
 		/* Wait indefinitely for data to be sent over Bluetooth */
 		struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
 						     K_FOREVER);
+
 		multi_nus_send(buf);					
-	
+		
 	}
 }

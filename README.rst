@@ -5,7 +5,7 @@ The Multi-NUS is a simple wireless UART network demo.
 
 This application is an extension of the Central UART sample application in NCS which is a fork of the Zephyr Project. 
 This version of the central UART is able to connect to multiple peripherals, up to 20, at the same time. 
-This application was built using v1.4.1 of NCS.
+This application was tested on v2.6.1 of the nRF Connect SDK.
  
 It uses the NUS Client to send data back and forth between a UART connection and a Bluetooth LE connection, emulating a serial port over Bluetooth LE.
 
