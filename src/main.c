@@ -638,7 +638,7 @@ static void connected(struct bt_conn *conn, uint8_t conn_err)
 
 	/*Stop scanning during the discovery*/
 	err = bt_scan_stop();
-	if ((!err) && (err != -EALREADY)) {
+	if ((err) && (err != -EALREADY)) {
 		LOG_ERR("Stop LE scan failed (err %d)", err);
 	}
 }
@@ -662,11 +662,10 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
 	bt_conn_unref(conn);
 	default_conn = NULL;
 
-	// err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
-	// if (err) {
-	// 	LOG_ERR("Scanning failed to start (err %d)",
-	// 		err);
-	// }
+	err = bt_scan_start(BT_SCAN_TYPE_SCAN_ACTIVE);
+	if (err && err != -EALREADY) {
+		LOG_ERR("Scanning failed to start (err %d)", err);
+	}
 }
 
 static void security_changed(struct bt_conn *conn, bt_security_t level,
